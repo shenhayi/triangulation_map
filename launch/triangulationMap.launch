@@ -1,0 +1,4 @@
+<launch>
+	<rosparam file="$(find triangulation_map)/cfg/triangulationMap.yaml" ns="/triangulation_map"  />
+	<node pkg="triangulation_map" type="triangulation_map_node" name="triangulation_map" output="screen" />
+</launch>
