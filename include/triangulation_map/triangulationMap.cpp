@@ -97,6 +97,27 @@ namespace triangulationMap{
             cout << this->hint_ << ": Depth scale factor: " << this->depthScale_ << endl;
         }
 
+        // ------------------------------------------------------------------------------------
+        // depth image columns
+        if (not this->nh_.getParam(this->ns_ + "/image_cols", this->imgCols_)){
+            this->imgCols_ = 640;
+            cout << this->hint_ << ": No depth image columns. Use default: 640." << endl;
+        }
+        else{
+            cout << this->hint_ << ": Depth image columns: " << this->imgCols_ << endl;
+        }
+
+        // depth skip pixel
+        if (not this->nh_.getParam(this->ns_ + "/image_rows", this->imgRows_)){
+            this->imgRows_ = 480;
+            cout << this->hint_ << ": No depth image rows. Use default: 480." << endl;
+        }
+        else{
+            cout << this->hint_ << ": Depth image rows: " << this->imgRows_ << endl;
+        }
+        this->projPoints_.resize(this->imgCols_ * this->imgRows_ / (this->skipPixel_ * this->skipPixel_));
+        // ------------------------------------------------------------------------------------
+
         // transform matrix: body to camera
         std::vector<double> body2CamVec (16);
         if (not this->nh_.getParam(this->ns_ + "/body_to_camera", body2CamVec)){
@@ -110,6 +131,205 @@ namespace triangulationMap{
             }
             // cout << this->hint_ << ": from body to camera: " << endl;
             // cout << this->body2Cam_ << endl;
+        }
+
+        // map resolution
+        if (not this->nh_.getParam(this->ns_ + "/map_resolution", this->mapRes_)){
+            this->mapRes_ = 0.1;
+            cout << this->hint_ << ": No map resolution. Use default: 0.1." << endl;
+        }
+        else{
+            cout << this->hint_ << ": Map resolution: " << this->mapRes_ << endl;
+        }
+
+        // ground height
+        if (not this->nh_.getParam(this->ns_ + "/ground_height", this->groundHeight_)){
+            this->groundHeight_ = 0.0;
+            cout << this->hint_ << ": No ground height. Use default: 0.0." << endl;
+        }
+        else{
+            cout << this->hint_ << ": Ground height: " << this->groundHeight_ << endl;
+        }
+
+
+        // map size
+        std::vector<double> mapSizeVec (3);
+        if (not this->nh_.getParam(this->ns_ + "/map_size", mapSizeVec)){
+            mapSizeVec[0] = 20; mapSizeVec[1] = 20; mapSizeVec[2] = 3;
+            cout << this->hint_ << ": No map size. Use default: [20, 20, 3]." << endl;
+        }
+        else{
+            this->mapSize_(0) = mapSizeVec[0];
+            this->mapSize_(1) = mapSizeVec[1];
+            this->mapSize_(2) = mapSizeVec[2];
+
+            // init min max
+            this->mapSizeMin_(0) = -mapSizeVec[0]/2; this->mapSizeMax_(0) = mapSizeVec[0]/2;
+            this->mapSizeMin_(1) = -mapSizeVec[1]/2; this->mapSizeMax_(1) = mapSizeVec[1]/2;
+            this->mapSizeMin_(2) = this->groundHeight_; this->mapSizeMax_(2) = this->groundHeight_ + mapSizeVec[2];
+
+            // min max for voxel
+            this->mapVoxelMin_(0) = 0; this->mapVoxelMax_(0) = ceil(mapSizeVec[0]/this->mapRes_);
+            this->mapVoxelMin_(1) = 0; this->mapVoxelMax_(1) = ceil(mapSizeVec[1]/this->mapRes_);
+            this->mapVoxelMin_(2) = 0; this->mapVoxelMax_(2) = ceil(mapSizeVec[2]/this->mapRes_);
+
+            // reserve vector for variables
+            int reservedSize = this->mapVoxelMax_(0) * this->mapVoxelMax_(1) * this->mapVoxelMax_(2);
+            this->countHitMiss_.resize(reservedSize, 0);
+            this->countHit_.resize(reservedSize, 0);
+            this->occupancy_.resize(reservedSize, this->pMinLog_-this->UNKNOWN_FLAG_);
+            this->occupancyInflated_.resize(reservedSize, false);
+            this->flagTraverse_.resize(reservedSize, -1);
+            this->flagRayend_.resize(reservedSize, -1);
+
+            cout << this->hint_ << ": Map size: " << "[" << mapSizeVec[0] << ", " << mapSizeVec[1] << ", " << mapSizeVec[2] << "]" << endl;
+        }
+
+        // Raycast max length
+        if (not this->nh_.getParam(this->ns_ + "/raycast_max_length", this->raycastMaxLength_)){
+            this->raycastMaxLength_ = 5.0;
+            cout << this->hint_ << ": No raycast max length. Use default: 5.0." << endl;
+        }
+        else{
+            cout << this->hint_ << ": Raycast max length: " << this->raycastMaxLength_ << endl;
+        }
+
+        // p hit
+        double pHit;
+        if (not this->nh_.getParam(this->ns_ + "/p_hit", pHit)){
+            pHit = 0.70;
+            cout << this->hint_ << ": No p hit. Use default: 0.70." << endl;
+        }
+        else{
+            cout << this->hint_ << ": P hit: " << pHit << endl;
+        }
+        this->pHitLog_ = this->logit(pHit);
+
+        // p miss
+        double pMiss;
+        if (not this->nh_.getParam(this->ns_ + "/p_miss", pMiss)){
+            pMiss = 0.35;
+            cout << this->hint_ << ": No p miss. Use default: 0.35." << endl;
+        }
+        else{
+            cout << this->hint_ << ": P miss: " << pMiss << endl;
+        }
+        this->pMissLog_ = this->logit(pMiss);
+
+        // p min
+        double pMin;
+        if (not this->nh_.getParam(this->ns_ + "/p_min", pMin)){
+            pHit = 0.12;
+            cout << this->hint_ << ": No p min. Use default: 0.12." << endl;
+        }
+        else{
+            cout << this->hint_ << ": P min: " << pMin << endl;
+        }
+        this->pMinLog_ = this->logit(pMin);
+
+        // p max
+        double pMax;
+        if (not this->nh_.getParam(this->ns_ + "/p_max", pMax)){
+            pMax = 0.97;
+            cout << this->hint_ << ": No p max. Use default: 0.97." << endl;
+        }
+        else{
+            cout << this->hint_ << ": P max: " << pMax << endl;
+        }
+        this->pMaxLog_ = this->logit(pMax);
+
+        // p occ
+        double pOcc;
+        if (not this->nh_.getParam(this->ns_ + "/p_occ", pOcc)){
+            pOcc = 0.80;
+            cout << this->hint_ << ": No p occ. Use default: 0.80." << endl;
+        }
+        else{
+            cout << this->hint_ << ": P occ: " << pOcc << endl;
+        }
+        this->pOccLog_ = this->logit(pOcc);
+
+        // local update range
+        std::vector<double> localUpdateRangeVec;
+        if (not this->nh_.getParam(this->ns_ + "/local_update_range", localUpdateRangeVec)){
+            localUpdateRangeVec = std::vector<double>{5.0, 5.0, 3.0};
+            cout << this->hint_ << ": No local update range. Use default: [5.0, 5.0, 3.0] m." << endl;
+        }
+        else{
+            cout << this->hint_ << ": Local update range: " << "[" << localUpdateRangeVec[0] << ", " << localUpdateRangeVec[1] << ", " << localUpdateRangeVec[2] << "]" << endl;
+        }
+        this->localUpdateRange_(0) = localUpdateRangeVec[0]; this->localUpdateRange_(1) = localUpdateRangeVec[1]; this->localUpdateRange_(2) = localUpdateRangeVec[2];
+
+
+        // local bound inflate factor
+        if (not this->nh_.getParam(this->ns_ + "/local_bound_inflation", this->localBoundInflate_)){
+            this->localBoundInflate_ = 0.0;
+            cout << this->hint_ << ": No local bound inflate. Use default: 0.0 m." << endl;
+        }
+        else{
+            cout << this->hint_ << ": Local bound inflate: " << this->localBoundInflate_ << endl;
+        }
+
+        // whether to clean local map
+        if (not this->nh_.getParam(this->ns_ + "/clean_local_map", this->cleanLocalMap_)){
+            this->cleanLocalMap_ = true;
+            cout << this->hint_ << ": No clean local map option. Use default: true." << endl;
+        }
+        else{
+            cout << this->hint_ << ": Clean local map option is set to: " << this->cleanLocalMap_ << endl;
+        }
+
+        // absolute dir of prebuilt map file (.pcd)
+        if (not this->nh_.getParam(this->ns_ + "/prebuilt_map_directory", this->prebuiltMapDir_)){
+            this->prebuiltMapDir_ = "";
+            cout << this->hint_ << ": Not using prebuilt map." << endl;
+        }
+        else{
+            cout << this->hint_ << ": the prebuilt map absolute dir is found: " << this->prebuiltMapDir_ << endl;
+        }
+
+        // local map size (visualization)
+        std::vector<double> localMapSizeVec;
+        if (not this->nh_.getParam(this->ns_ + "/local_map_size", localMapSizeVec)){
+            localMapSizeVec = std::vector<double>{10.0, 10.0, 2.0};
+            cout << this->hint_ << ": No local map size. Use default: [10.0, 10.0, 3.0] m." << endl;
+        }
+        else{
+            cout << this->hint_ << ": Local map size: " << "[" << localMapSizeVec[0] << ", " << localMapSizeVec[1] << ", " << localMapSizeVec[2] << "]" << endl;
+        }
+        this->localMapSize_(0) = localMapSizeVec[0]/2; this->localMapSize_(1) = localMapSizeVec[1]/2; this->localMapSize_(2) = localMapSizeVec[2]/2;
+        this->localMapVoxel_(0) = int(ceil(localMapSizeVec[0]/(2*this->mapRes_))); this->localMapVoxel_(1) = int(ceil(localMapSizeVec[1]/(2*this->mapRes_))); this->localMapVoxel_(2) = int(ceil(localMapSizeVec[2]/(2*this->mapRes_)));
+
+        // max vis height
+        if (not this->nh_.getParam(this->ns_ + "/max_height_visualization", this->maxVisHeight_)){
+            this->maxVisHeight_ = 3.0;
+            cout << this->hint_ << ": No max visualization height. Use default: 3.0 m." << endl;
+        }
+        else{
+            cout << this->hint_ << ": Max visualization height: " << this->maxVisHeight_ << endl;
+        }
+
+        // visualize global map
+        if (not this->nh_.getParam(this->ns_ + "/visualize_global_map", this->visGlobalMap_)){
+            this->visGlobalMap_ = false;
+            cout << this->hint_ << ": No visualize map option. Use default: visualize local map." << endl;
+        }
+        else{
+            cout << this->hint_ << ": Visualize map option. local (0)/global (1): " << this->visGlobalMap_ << endl;
+        }
+
+        // verbose
+        if (not this->nh_.getParam(this->ns_ + "/verbose", this->verbose_)){
+            this->verbose_ = true;
+            cout << this->hint_ << ": No verbose option. Use default: check update info." << endl;
+        }
+        else{
+            if (not this->verbose_){
+                cout << this->hint_ << ": Not display messages" << endl;
+            }
+            else{
+                cout << this->hint_ << ": Display messages" << endl;
+            }
         }
     }
 
@@ -192,14 +412,25 @@ namespace triangulationMap{
             for (int u=0; u<this->depthImage_.cols; ++u){
                 depth = static_cast<double>(this->depthImage_.at<ushort>(v, u)) * inv_factor;
                 if (depth > 0.0){
-                    currPointCam(0) = (u - this->cx_) * depth * inv_fx;
-                    currPointCam(1) = (v - this->cy_) * depth * inv_fy;
-                    currPointCam(2) = depth;
+                    int detect = false;
+                    int label = 0;
+                    for(int i=1;i<channel;i++){
+                        if(this->mask_[i].at<ushort>(v,u) != 0){
+                            detect = true;
+                            label = mask_[i].at<ushort>(v,u);
+                            break;
+                        }
+                    }
+                    if(detect){
+                        currPointCam(0) = (u - this->cx_) * depth * inv_fx;
+                        currPointCam(1) = (v - this->cy_) * depth * inv_fy;
+                        currPointCam(2) = depth;
 
-                    currPointMap = this->body2Cam_.block<3, 3>(0, 0) * currPointCam + this->body2Cam_.block<3, 1>(0, 3);
+                        currPointMap = this->body2Cam_.block<3, 3>(0, 0) * currPointCam + this->body2Cam_.block<3, 1>(0, 3);
 
-                    this->projPoints_.push_back(currPointMap);
-                    this->projPointsNum_++;
+                        this->projPoints_.push_back(currPointMap);
+                        this->projPointsNum_++;
+                    }
                 }
             }
         }

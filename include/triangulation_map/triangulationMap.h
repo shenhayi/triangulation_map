@@ -43,6 +43,7 @@ namespace triangulationMap{
 		ros::Timer triangulationMap_Timer_;
         ros::Publisher depthCloudPub_;
         ros::Publisher depthImagePub_;
+        //TODO: add occupancy map
 
 		std::string depthTopicName_; // depth image topic
         std::string depth_alignedTopicName_; // depth aligned image topic
@@ -57,8 +58,33 @@ namespace triangulationMap{
 		// CAMERA
 		double fx_, fy_, cx_, cy_; // depth camera intrinsics
 		double depthScale_; // value / depthScale
+        double depthMinValue_, depthMaxValue_;
+        int depthFilterMargin_, skipPixel_; // depth filter margin
 		int imgCols_, imgRows_;
 		Eigen::Matrix4d body2Cam_; // from body frame to camera frame
+
+        // RAYCASTING
+        double raycastMaxLength_;
+        double pHitLog_, pMissLog_, pMinLog_, pMaxLog_, pOccLog_;
+
+        // MAP
+        double UNKNOWN_FLAG_ = 0.01;
+        double mapRes_;
+        double groundHeight_; // ground height in z axis
+        Eigen::Vector3d mapSize_, mapSizeMin_, mapSizeMax_; // reserved min/max map size
+        Eigen::Vector3i mapVoxelMin_, mapVoxelMax_; // reserved min/max map size in voxel
+        Eigen::Vector3d localUpdateRange_; // self defined local update range
+        double localBoundInflate_; // inflate local map for some distance
+        bool cleanLocalMap_;
+        std::string prebuiltMapDir_;
+
+        // VISUALZATION
+        double maxVisHeight_;
+        Eigen::Vector3d localMapSize_;
+        Eigen::Vector3i localMapVoxel_; // voxel representation of local map size
+        bool visGlobalMap_;
+        bool verbose_;
+        // -----------------------------------------------------------------
 
         // data
         // -----------------------------------------------------------------
@@ -89,7 +115,6 @@ namespace triangulationMap{
         bool useFreeRegions_ = false;
 
         //Segmentation
-        std::vector<std::vector<Eigen::Vector3d>> segments_;
         std::vector<cv::Mat> mask_;
 
 		public:
@@ -102,20 +127,29 @@ namespace triangulationMap{
 		void registerPub();
         void registerSub();
 
+        // callback
         void triangulationMapCB(const ros::TimerEvent& event);
-
         void depthImageCB(const sensor_msgs::ImageConstPtr& depthImageMsg);
         void depthAlignedImageCB(const sensor_msgs::ImageConstPtr& depthAlignedImageMsg);
         void poseCB(const geometry_msgs::PoseStampedConstPtr& poseMsg);
         void semanticMapCB(const std_msgs::UInt16MultiArrayConstPtr& semanticMapMsg);
 
+        // core functions
         void getMask(int height, int width, int channel);
 		void projectDepthImage();// project depth image to point cloud
-
         void getCameraPose(const geometry_msgs::PoseStampedConstPtr& pose, Eigen::Matrix4d& camPoseMatrix);
+
+        // visualization
         void publishDepthImage();// publish depth image
         void publishProjPoints();// publish depth cloud
+        // helper functions
+        double logit(double x);
     };
+    // inline function
+    // helper functions
+    inline double triangulatorMap::logit(double x){
+        return log(x/(1-x));
+    }
     inline void triangulatorMap::getCameraPose(const geometry_msgs::PoseStampedConstPtr& pose, Eigen::Matrix4d& camPoseMatrix){
         Eigen::Quaterniond quat;
         quat = Eigen::Quaterniond(pose->pose.orientation.w, pose->pose.orientation.x, pose->pose.orientation.y, pose->pose.orientation.z);
